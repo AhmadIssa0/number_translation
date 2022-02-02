@@ -93,6 +93,8 @@ if __name__ == '__main__':
                                    input_embedding_dim=10,
                                    output_embedding_dim=10,
                                    encoder_lstm_hidden_dim=50,
+                                   encoder_num_layers=1,
+                                   bidirectional=True,
                                    input_start_token_index=num_dataset.WORD_TO_INDEX[num_dataset.START_TOKEN],
                                    input_end_token_index=num_dataset.WORD_TO_INDEX[num_dataset.END_TOKEN],
                                    output_start_token_index=num_dataset.CHAR_TO_INDEX[num_dataset.START_TOKEN],
