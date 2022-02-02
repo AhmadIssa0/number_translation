@@ -7,13 +7,16 @@ from torch.utils.data import DataLoader
 
 class NumberTranslationModel(nn.Module):
     def __init__(self, num_input_tokens: int, num_output_tokens: int, input_embedding_dim: int,
-                 output_embedding_dim: int, encoder_lstm_hidden_dim: int, input_start_token_index: int,
+                 output_embedding_dim: int, encoder_lstm_hidden_dim: int, encoder_num_layers: int,
+                 bidirectional: bool, input_start_token_index: int,
                  output_start_token_index: int, input_end_token_index: int, output_end_token_index: int):
         super().__init__()
         self._num_input_tokens = num_input_tokens
         self._num_output_tokens = num_output_tokens
         self._input_embedding_dim = input_embedding_dim
         self._encoder_lstm_hidden_dim = encoder_lstm_hidden_dim
+        self._encoder_num_layers = encoder_num_layers
+        self._bidirectional = bidirectional
 
         self._input_start_token_index = input_start_token_index
         self._output_start_token_index = output_start_token_index
@@ -21,17 +24,29 @@ class NumberTranslationModel(nn.Module):
         self._output_end_token_index = output_end_token_index
 
         self._input_token_embedding = nn.Embedding(num_input_tokens, input_embedding_dim)
-        self._encoder_lstm = nn.LSTMCell(input_embedding_dim, encoder_lstm_hidden_dim)
+        #self._encoder_lstm = nn.LSTMCell(input_embedding_dim, encoder_lstm_hidden_dim)
+        self._encoder_lstm = nn.LSTM(input_size=input_embedding_dim,
+                                     hidden_size=encoder_lstm_hidden_dim,
+                                     bidirectional=bidirectional)
 
         self._output_token_embedding = nn.Embedding(num_output_tokens, output_embedding_dim)
-        self._decoder_lstm = nn.LSTMCell(output_embedding_dim, encoder_lstm_hidden_dim)
+        D = 2 if bidirectional else 1
+        decoder_lstm_hidden_dim = D * encoder_num_layers * encoder_lstm_hidden_dim
+        self._decoder_lstm = nn.LSTMCell(output_embedding_dim, decoder_lstm_hidden_dim)
+
+        # right now the decoder is only a single layer.
+        #self._decoder_lstm = nn.LSTM(input_size=output_embedding_dim,
+        #                             hidden_size=2*encoder_num_layers*encoder_lstm_hidden_dim)
+
         # linearly project output of decoder lstm to logits
-        self._decoder_proj = nn.Linear(encoder_lstm_hidden_dim, num_output_tokens)
+        self._decoder_proj = nn.Linear(decoder_lstm_hidden_dim, num_output_tokens)
 
     def get_init_state(self, batch_size, device):
         """Returns initial state of encoder LSTM."""
-        hidden = torch.zeros(size=(batch_size, self._encoder_lstm_hidden_dim), device=device)
-        cell = torch.zeros(size=(batch_size, self._encoder_lstm_hidden_dim), device=device)
+        D = 2 if self._bidirectional else 1
+        num_layers = self._encoder_num_layers
+        hidden = torch.zeros(size=(D * num_layers, batch_size, self._encoder_lstm_hidden_dim), device=device)
+        cell = torch.zeros(size=(D * num_layers, batch_size, self._encoder_lstm_hidden_dim), device=device)
         return hidden, cell
 
     def greedy_predict(self, input_tokens: List[torch.Tensor], device, max_output_len, index_to_words):
@@ -70,21 +85,36 @@ class NumberTranslationModel(nn.Module):
     def forward_encoder(self, input_tokens: List[torch.Tensor], device):
         """
         Computes forward pass over the encoder.
-        :param input_tokens:
+        :param input_tokens: each tensor in list represents one sentence
         :param device:
-        :return: (hidden, cell) state output of encoder
+        :return: (hidden, cell) state output of encoder, each has shape
         """
-        input_tensor = nn.utils.rnn.pad_sequence(input_tokens, batch_first=True,
+        input_tensor = nn.utils.rnn.pad_sequence(input_tokens, batch_first=False,
                                                  padding_value=self._input_end_token_index).to(device=device)
-        batch_size = input_tensor.shape[0]
-        input_max_len = input_tensor.shape[1]
+        batch_size = input_tensor.shape[1]
+        input_max_len = input_tensor.shape[0]
 
         state = self.get_init_state(batch_size, device)
-        for i in range(input_max_len):
-            token_embedding = self._input_token_embedding(input_tensor[:, i])
-            state = self._encoder_lstm(token_embedding, state)
 
-        return state
+        # token_embedding_tensor has shape (input_max_len, batch_size, embedding_dim)
+        token_embedding_tensor = self._input_token_embedding(input_tensor)
+
+        state = self._encoder_lstm(token_embedding_tensor)
+
+        #for i in range(input_max_len):
+        #    token_embedding = self._input_token_embedding(input_tensor[:, i])
+        #    state = self._encoder_lstm(token_embedding, state)
+
+        # each of hidden, cell has shape (D * num_layers, N, H_in)
+        # convert to (1, N, D * num_layers * H_in) for input into the decoder LSTM
+        output, h_and_c = state
+
+        h_and_c = list(h_and_c)
+        for i in range(2):
+            h_and_c[i] = torch.swapaxes(h_and_c[i], 0, 1)
+            h_and_c[i] = torch.reshape(h_and_c[i], (h_and_c[i].shape[0], -1))
+
+        return h_and_c
 
     def forward(self, input_tokens: List[torch.Tensor], output_tokens, device):
         """ Forward pass in teacher forcing mode.
