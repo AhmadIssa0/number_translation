@@ -16,7 +16,7 @@ WORD_TO_INDEX = {WORD_TOKENS[i]: i for i in range(len(WORD_TOKENS))}
 INDEX_TO_WORD = {i: WORD_TOKENS[i] for i in range(len(WORD_TOKENS))}
 
 CHAR_TOKENS = [START_TOKEN, END_TOKEN, '零', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十',
-               '百', '千', '万', '亿']
+               '百', '千', '万', '亿', '兆']
 
 CHAR_TO_INDEX = {CHAR_TOKENS[i]: i for i in range(len(CHAR_TOKENS))}
 INDEX_TO_CHAR = {i: CHAR_TOKENS[i] for i in range(len(CHAR_TOKENS))}
@@ -28,7 +28,7 @@ class NumberTranslationDataset(Dataset):
         :param size: Size of the dataset.
         """
         super().__init__()
-        self.nums = np.random.uniform(low=0, high=15, size=size)
+        self.nums = np.random.uniform(low=0, high=25, size=size)
         self.nums = np.round(np.exp(self.nums))
         self.nums = self.nums.astype(np.longlong)
 
@@ -40,7 +40,7 @@ class NumberTranslationDataset(Dataset):
         eng_tokens = self.number_to_sent_converter.tokenize_english_number(n_english)
         eng_tokens = torch.tensor(eng_tokens, dtype=torch.int64)
         eng_len = eng_tokens.shape[-1]
-        eng_tokens = torch.hstack([eng_tokens, torch.ones(size=(20 - eng_len,), dtype=torch.long)])
+        eng_tokens = torch.hstack([eng_tokens, torch.ones(size=(30 - eng_len,), dtype=torch.long)])
 
         n_chinese = self.number_to_sent_converter.number_to_chinese(n)
         ch_tokens = self.number_to_sent_converter.tokenize_chinese_number(n_chinese)
@@ -71,6 +71,9 @@ class NumberToSentenceConverter:
         tokens = [CHAR_TO_INDEX[c] for c in list(ch_number)]
         return tokens
 
+    def chinese_tokens_to_chars(self, ch_tokens):
+        return ''.join([INDEX_TO_CHAR[token] for token in ch_tokens])
+
     def init_num_to_chars_dict(self):
         ones = list('零一二三四五六七八九')
         
@@ -82,6 +85,7 @@ class NumberToSentenceConverter:
         self.num_to_char[1000] = '千'
         self.num_to_char[10 ** 4] = '万'
         self.num_to_char[10 ** 8] = '亿'
+        self.num_to_char[10 ** 12] = '兆'
 
     def number_to_chinese(self, n, is_suffix=False):
         if n == 0:

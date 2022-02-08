@@ -5,18 +5,28 @@ import number_translation_dataset
 import number_translation_dataset as num_dataset
 from torch.utils.data import DataLoader
 from model import NumberTranslationModel
+import math
 
 
-def fit(model, dataloader, epochs, optimizer: torch.optim.Optimizer):
+def fit(model, dataloader, epochs, optimizer: torch.optim.Optimizer, validation_dataloader = None,
+        model_save_path=None):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print('Training on device', device)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.9, patience=20)
+    largest_validation_avg_cum_log_prob = -math.inf
     for epoch in range(epochs):
         print(f'epoch: {epoch}')
-        compute_acc = True if epoch % 20 == 0 else False
+        compute_acc = True if epoch % 5 == 0 else False
+        training_metrics = eval(model, dataloader, compute_acc=False)
+        print(f'training set:', training_metrics)
 
-        training_metrics = eval(model, dataloader, compute_acc=compute_acc)
-        print(f'training set log prob:', training_metrics)
+        if validation_dataloader:
+            validation_metrics = eval(model, validation_dataloader, compute_acc=compute_acc)
+            if model_save_path:
+                if validation_metrics['avg_cum_log_prob'] > largest_validation_avg_cum_log_prob:
+                    model.save(model_save_path)
+                    largest_validation_avg_cum_log_prob = validation_metrics['avg_cum_log_prob']
+            print(f'validation set:', validation_metrics)
 
         for data_batch in dataloader:
             optimizer.zero_grad()
@@ -43,7 +53,7 @@ def accuracy(prediction_tensor, true_output_tokens):
         true_tokens = true_output_tokens[i]
         matches = True
         for j in range(true_tokens.shape[0]):
-            if prediction_tensor[i, j].item() != true_tokens[j]:
+            if prediction_tensor.shape[1] <= j or prediction_tensor[i, j].item() != true_tokens[j]:
                 matches = False
                 break
         if matches:
@@ -64,7 +74,7 @@ def eval(model, dataloader, compute_acc=False):
             num_examples += len(data_batch)
 
             if compute_acc:
-                prediction_tensor = model.greedy_predict(input_tokens=eng_tokens, device=device, max_output_len=25,
+                prediction_tensor = model.greedy_predict(input_tokens=eng_tokens, device=device, max_output_len=30,
                                               index_to_words=number_translation_dataset.INDEX_TO_CHAR)['token_tensor']
                 correct_predictions += accuracy(prediction_tensor, ch_tokens)
                 """
@@ -83,35 +93,58 @@ def eval(model, dataloader, compute_acc=False):
             metrics['predictions_acc'] = correct_predictions / num_examples
         return metrics
 
-
-if __name__ == '__main__':
-    # test the model
-
+def train():
     # english to chinese
     model = NumberTranslationModel(num_input_tokens=len(num_dataset.WORD_TOKENS),
                                    num_output_tokens=len(num_dataset.CHAR_TOKENS),
-                                   input_embedding_dim=10,
-                                   output_embedding_dim=10,
-                                   encoder_lstm_hidden_dim=50,
-                                   encoder_num_layers=1,
+                                   input_embedding_dim=15,
+                                   output_embedding_dim=15,
+                                   encoder_lstm_hidden_dim=20,
+                                   encoder_num_layers=2,
                                    bidirectional=True,
                                    input_start_token_index=num_dataset.WORD_TO_INDEX[num_dataset.START_TOKEN],
                                    input_end_token_index=num_dataset.WORD_TO_INDEX[num_dataset.END_TOKEN],
                                    output_start_token_index=num_dataset.CHAR_TO_INDEX[num_dataset.START_TOKEN],
                                    output_end_token_index=num_dataset.CHAR_TO_INDEX[num_dataset.END_TOKEN])
-    dataset = num_dataset.NumberTranslationDataset(size=10000)
+    dataset = num_dataset.NumberTranslationDataset(size=100000)
     device = 'cuda'
-
 
     def collate_fn(x):
         return x
 
+    dataloader = DataLoader(dataset, batch_size=5000, shuffle=True, collate_fn=collate_fn)
 
-    dataloader = DataLoader(dataset, batch_size=1000, shuffle=True, collate_fn=collate_fn)
+    validation_ds = num_dataset.NumberTranslationDataset(size=5000)
+    validation_dl = DataLoader(validation_ds, batch_size=1000, shuffle=False, collate_fn=collate_fn)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
     model = model.to(device='cuda')
 
-    fit(model, dataloader, epochs=10000, optimizer=optimizer)
+    fit(model, dataloader, epochs=10000, optimizer=optimizer, validation_dataloader=validation_dl,
+        model_save_path='model.pt')
+
+def load_model_from_file(path, device):
+    # english to chinese
+    model = NumberTranslationModel(num_input_tokens=len(num_dataset.WORD_TOKENS),
+                                   num_output_tokens=len(num_dataset.CHAR_TOKENS),
+                                   input_embedding_dim=15,
+                                   output_embedding_dim=15,
+                                   encoder_lstm_hidden_dim=20,
+                                   encoder_num_layers=2,
+                                   bidirectional=True,
+                                   input_start_token_index=num_dataset.WORD_TO_INDEX[num_dataset.START_TOKEN],
+                                   input_end_token_index=num_dataset.WORD_TO_INDEX[num_dataset.END_TOKEN],
+                                   output_start_token_index=num_dataset.CHAR_TO_INDEX[num_dataset.START_TOKEN],
+                                   output_end_token_index=num_dataset.CHAR_TO_INDEX[num_dataset.END_TOKEN])
+    model = model.to(device=device)
+    model.load_state_dict(torch.load(path))
+    model.eval()
+    return model
+
+if __name__ == '__main__':
+    # test the model
+
+    train()
     """
     for i in range(1000):
         fit(model, dataloader, epochs=20, optimizer=optimizer)

@@ -27,6 +27,7 @@ class NumberTranslationModel(nn.Module):
         #self._encoder_lstm = nn.LSTMCell(input_embedding_dim, encoder_lstm_hidden_dim)
         self._encoder_lstm = nn.LSTM(input_size=input_embedding_dim,
                                      hidden_size=encoder_lstm_hidden_dim,
+                                     num_layers=encoder_num_layers,
                                      bidirectional=bidirectional)
 
         self._output_token_embedding = nn.Embedding(num_output_tokens, output_embedding_dim)
@@ -160,6 +161,9 @@ class NumberTranslationModel(nn.Module):
         token_embedding = self._input_token_embedding(token)
         hidden, cell = self._encoder_lstm(token_embedding, input_hidden_state)
         return hidden, cell
+
+    def save(self, path):
+        torch.save(self.state_dict(), path)
 
 if __name__ == '__main__':
     # test the model
